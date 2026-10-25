@@ -12,3 +12,6 @@ openpyxl
 huggingface_hub
 ai-edge-litert
 qrcode[pil]
+fastapi
+uvicorn
+python-multipart
