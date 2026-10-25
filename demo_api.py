@@ -92,35 +92,73 @@ def quality(face_bgr: np.ndarray, detector_confidence: float):
     }
 
 
-def status_from_score(score: float):
-    if score < 2.5:
+def status_from_scores(scores: dict, quality: dict):
+    """
+    Conservative demo screening logic.
+
+    The four facial regions are combined instead of mapping a normalized
+    geometry total directly to a health category. This reduces false alarms
+    from a single anatomy- or pose-related deviation.
+    """
+    if not quality["accepted"]:
         return {
-            "level": "healthy",
+            "level": "quality",
             "eyebrow": "AI-Tails Screening",
-            "title": "Healthy-like",
-            "summary": "Die aktuell messbaren Gesichtssignale liegen überwiegend nahe an der gesunden Referenz.",
+            "title": "Analyse unsicher",
+            "summary": "Die Bildqualität reicht für eine verlässliche Screening-Stufe nicht aus. Bitte die Katze näher, schärfer und möglichst frontal fotografieren.",
         }
-    if score < 5.0:
+
+    facial_scores = {
+        key: scores[key]
+        for key in ("ears", "eyes", "muzzle", "whiskers")
+        if scores.get(key) is not None
+    }
+
+    strong = sum(value == 2 for value in facial_scores.values())
+    moderate = sum(value == 1 for value in facial_scores.values())
+
+    # Vet check is intentionally difficult to reach: at least three strongly
+    # deviating facial regions and either eyes or muzzle must be among them.
+    if (
+        strong >= 3
+        and (
+            facial_scores.get("eyes") == 2
+            or facial_scores.get("muzzle") == 2
+        )
+    ):
         return {
-            "level": "slight",
+            "level": "vet",
             "eyebrow": "AI-Tails Screening",
-            "title": "Slight indicators",
-            "summary": "Es sind leichte Abweichungen erkennbar. Einzelne Signale sollten im Verlauf weiter beobachtet werden.",
+            "title": "Vet check",
+            "summary": "Mehrere deutliche Gesichtssignale treten gleichzeitig auf. Eine tierärztliche Beurteilung sollte in Betracht gezogen werden.",
         }
-    if score < 7.5:
+
+    # Multiple strong deviations, or one strong deviation together with at
+    # least one moderate deviation, warrant continued monitoring.
+    if strong >= 2 or (strong >= 1 and moderate >= 1):
         return {
             "level": "monitor",
             "eyebrow": "AI-Tails Screening",
             "title": "Monitoring",
-            "summary": "Mehrere Gesichtssignale weichen von der gesunden Referenz ab. Eine erneute Beobachtung ist sinnvoll.",
+            "summary": "Mehrere Gesichtssignale weichen gleichzeitig von der gesunden Referenz ab. Eine erneute Beobachtung ist sinnvoll.",
         }
-    return {
-        "level": "vet",
-        "eyebrow": "AI-Tails Screening",
-        "title": "Vet check",
-        "summary": "Mehrere deutliche Abweichungen wurden erkannt. Eine tierärztliche Beurteilung sollte in Betracht gezogen werden.",
-    }
 
+    # One strong deviation by itself, or several moderate deviations, is kept
+    # below Monitoring because anatomy, pose or attention can affect geometry.
+    if strong == 1 or moderate >= 2:
+        return {
+            "level": "slight",
+            "eyebrow": "AI-Tails Screening",
+            "title": "Slight indicators",
+            "summary": "Es sind leichte oder einzelne stärkere Abweichungen erkennbar. Die Signale sollten im Verlauf weiter beobachtet werden.",
+        }
+
+    return {
+        "level": "healthy",
+        "eyebrow": "AI-Tails Screening",
+        "title": "Healthy-like",
+        "summary": "Die aktuell messbaren Gesichtssignale liegen überwiegend nahe an der gesunden Referenz.",
+    }
 
 def feature_text(key: str, score: int | None):
     labels = {
@@ -201,7 +239,7 @@ async def analyze(file: UploadFile = File(...)):
             "text": text,
         })
 
-    report = status_from_score(normalized)
+    report = status_from_scores(scores, quality)
     report["note"] = (
         "AI-Tails erkennt Abweichungen in messbaren Gesichtsmerkmalen. "
         "Ein einzelnes Foto ist keine tierärztliche Diagnose und sollte im Kontext weiterer Signale betrachtet werden."
