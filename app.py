@@ -325,7 +325,9 @@ def show_ai_result(class_names, probabilities, face_count: int):
     )
 
     st.metric("Klassifikator-Konfidenz", f"{confidence * 100:.1f}%")
-    st.caption(f"Ausgewertete Katzengesichter: {face_count}")
+    st.caption(
+        f"Ausgewertete Gesichtsaufnahmen/Video-Frames: {face_count}"
+    )
     st.caption(
         "Dieser Klassifikator ist ein experimenteller Zusatz. "
         "Die erklärbare Hauptbewertung erfolgt unten über 48 Landmarks und die gesunde Referenz."
@@ -358,7 +360,32 @@ def fgs_interpretation(score: int):
     return "Starker Schmerz wahrscheinlich – tierärztliche Beurteilung empfohlen", "🔴"
 
 
-def show_geometry_fgs_result(faces_bgr):
+def _face_quality(face_bgr, detector_confidence):
+    height, width = face_bgr.shape[:2]
+    gray = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2GRAY)
+    sharpness = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+    reasons = []
+
+    if detector_confidence < 0.50:
+        reasons.append(f"YOLO nur {detector_confidence * 100:.0f}%")
+
+    if min(height, width) < 80:
+        reasons.append(f"Gesicht zu klein ({width}×{height}px)")
+
+    if sharpness < 30.0:
+        reasons.append(f"Bild unscharf (Schärfe {sharpness:.0f})")
+
+    return {
+        "accepted": not reasons,
+        "sharpness": sharpness,
+        "width": width,
+        "height": height,
+        "reasons": reasons,
+    }
+
+
+def show_geometry_fgs_result(analyses):
     st.subheader("Erklärbare FGS-Geometrieanalyse")
 
     try:
@@ -368,24 +395,36 @@ def show_geometry_fgs_result(faces_bgr):
         return
 
     feature_rows = []
-    landmark_rows = []
     landmark_results = []
 
-    for index, face in enumerate(faces_bgr[:12], start=1):
+    for index, item in enumerate(analyses, start=1):
+        face = item["face"]
+        detector_confidence = float(item.get("detector_confidence", 0.0))
+        quality = _face_quality(face, detector_confidence)
+
         try:
             landmarks = predict_landmarks(face)
             features = extract_geometry_features(landmarks)
-            feature_rows.append(features)
-            landmark_rows.append((face, landmarks))
+
+            status = "accepted" if quality["accepted"] else "quality_rejected"
+
             landmark_results.append(
                 {
                     "index": index,
                     "face": face,
                     "landmarks": landmarks,
                     "features": features,
-                    "status": "ok",
+                    "status": status,
+                    "quality": quality,
+                    "source_name": item.get("source_name", "unbekannt"),
+                    "source_type": item.get("source_type", "image"),
+                    "timestamp": item.get("timestamp"),
                 }
             )
+
+            if quality["accepted"]:
+                feature_rows.append(features)
+
         except Exception as exc:
             landmark_results.append(
                 {
@@ -393,16 +432,35 @@ def show_geometry_fgs_result(faces_bgr):
                     "face": face,
                     "landmarks": None,
                     "features": None,
-                    "status": "failed",
+                    "status": "landmark_failed",
+                    "quality": quality,
+                    "source_name": item.get("source_name", "unbekannt"),
+                    "source_type": item.get("source_type", "image"),
+                    "timestamp": item.get("timestamp"),
                     "error": str(exc),
                 }
             )
 
     if not feature_rows:
-        st.warning("Keine verwertbaren 48-Punkt-Landmarks gefunden.")
+        st.warning(
+            "Es wurden Gesichter erkannt, aber keines erfüllte die "
+            "Qualitätskriterien für die FGS-Geometrieanalyse."
+        )
+
+        with st.expander("Warum wurden die Gesichter nicht verwendet?"):
+            for item in landmark_results:
+                reasons = item["quality"].get("reasons", [])
+                if item["status"] == "landmark_failed":
+                    reasons = reasons + ["48 Landmarks konnten nicht bestimmt werden"]
+                st.write(
+                    f"- Gesicht {item['index']} ({item['source_name']}): "
+                    + (", ".join(reasons) if reasons else "nicht auswertbar")
+                )
         return
 
     keys = feature_rows[0].keys()
+
+    # Robust multi-image decision: median prevents one bad frame from dominating.
     session_features = {
         key: float(np.median([row[key] for row in feature_rows]))
         for key in keys
@@ -448,18 +506,41 @@ def show_geometry_fgs_result(faces_bgr):
         else 0.0
     )
 
-    success_count = sum(1 for item in landmark_results if item["status"] == "ok")
-    failed_count = len(landmark_results) - success_count
-    landmark_rate = success_count / max(len(landmark_results), 1)
+    accepted_count = sum(
+        1 for item in landmark_results
+        if item["status"] == "accepted"
+    )
+    quality_rejected_count = sum(
+        1 for item in landmark_results
+        if item["status"] == "quality_rejected"
+    )
+    landmark_failed_count = sum(
+        1 for item in landmark_results
+        if item["status"] == "landmark_failed"
+    )
 
-    feature_variability = {}
-    for key in keys:
-        values = [row[key] for row in feature_rows]
-        feature_variability[key] = float(np.std(values)) if len(values) > 1 else 0.0
+    landmark_success_count = accepted_count + quality_rejected_count
+    landmark_rate = landmark_success_count / max(len(landmark_results), 1)
+    usable_rate = accepted_count / max(len(landmark_results), 1)
 
-    variability_values = list(feature_variability.values())
-    stability_index = 1.0 / (1.0 + float(np.mean(variability_values)))
-    stability_index = float(np.clip(stability_index, 0.0, 1.0))
+    # Session stability in units of healthy standard deviations.
+    # This is comparable across features, unlike mixing raw degrees and ratios.
+    per_feature_z_spread = []
+
+    if len(feature_rows) > 1:
+        for key in keys:
+            healthy_std = max(float(baseline.std[key]), 1e-4)
+            z_values = [
+                (float(row[key]) - float(baseline.mean[key])) / healthy_std
+                for row in feature_rows
+            ]
+            per_feature_z_spread.append(float(np.std(z_values)))
+
+        mean_z_spread = float(np.mean(per_feature_z_spread))
+        stability_index = float(np.exp(-mean_z_spread))
+    else:
+        mean_z_spread = 0.0
+        stability_index = 0.5
 
     score_col1, score_col2, score_col3, score_col4 = st.columns(4)
 
@@ -477,22 +558,43 @@ def show_geometry_fgs_result(faces_bgr):
 
     with score_col3:
         st.metric(
-            "Landmark-Erkennung",
-            f"{landmark_rate * 100:.0f}%",
-            help=f"{success_count} von {len(landmark_results)} Gesichtern verwertbar",
+            "Für FGS nutzbar",
+            f"{accepted_count}/{len(landmark_results)}",
+            help=(
+                "Nur scharfe, ausreichend große Gesichter mit ausreichender "
+                "YOLO-Sicherheit fließen in den geometrischen Score ein."
+            ),
         )
 
     with score_col4:
         st.metric(
             "Session-Stabilität",
             f"{stability_index * 100:.0f}%",
-            help="Wie ähnlich die geometrischen Messwerte zwischen den ausgewerteten Bildern sind.",
+            help=(
+                "Konsistenz der akzeptierten Bilder, gemessen in standardisierten "
+                "Abweichungen zur gesunden Referenz."
+            ),
         )
 
     st.caption(
         f"Gesunde Referenz: {baseline_meta.get('healthy_cats', '?')} Katzen | "
-        f"Landmarks erfolgreich: {success_count} | fehlgeschlagen: {failed_count}"
+        f"48 Landmarks erkannt: {landmark_success_count}/{len(landmark_results)} | "
+        f"für Score akzeptiert: {accepted_count} | "
+        f"Qualitätsfilter: {quality_rejected_count} | "
+        f"Landmark-Fehler: {landmark_failed_count}"
     )
+
+    if accepted_count < 3:
+        st.warning(
+            "Weniger als 3 qualitativ geeignete Gesichter. "
+            "Die Session-Einschätzung ist dadurch weniger robust."
+        )
+
+    if stability_index < 0.55:
+        st.warning(
+            "Die akzeptierten Bilder unterscheiden sich deutlich voneinander. "
+            "Mehr frontale, scharfe Aufnahmen würden die Session stabiler machen."
+        )
 
     if normalized_10 < 3.5:
         st.success("Geometrie liegt überwiegend nahe an der gesunden Referenz.")
@@ -518,40 +620,60 @@ def show_geometry_fgs_result(faces_bgr):
         "0 = innerhalb der gesunden Referenz (<1σ), "
         "1 = moderate Abweichung (1–2σ), "
         "2 = starke Abweichung (≥2σ). "
-        "Die Schwellen sind für den Makeathon transparent gewählt und noch nicht klinisch validiert."
+        "Die Session-Merkmale werden robust über den Median der akzeptierten "
+        "Gesichter zusammengefasst. Die Schwellen sind noch nicht klinisch validiert."
     )
 
     if landmark_results:
-        with st.expander("48 Landmark-Punkte aller ausgewerteten Gesichter anzeigen"):
+        with st.expander("48 Landmark-Punkte aller erkannten Gesichter anzeigen"):
             st.caption(
-                "Jedes ausgewertete Gesicht wird separat gezeigt. "
-                "Wenn keine zuverlässigen Landmarks erzeugt werden konnten, "
-                "wird das Bild entsprechend markiert."
+                "Alle von YOLO erkannten Gesichter werden gezeigt. Grün = fließt in "
+                "den FGS-Geometrie-Score ein, Gelb = Landmarks erkannt aber wegen "
+                "Bildqualität ausgeschlossen, Rot = Landmark-Erkennung fehlgeschlagen."
             )
 
             display_cols = st.columns(3)
 
             for idx, item in enumerate(landmark_results):
                 with display_cols[idx % 3]:
-                    if item["status"] == "ok":
-                        overlay = draw_landmarks(
+                    timestamp = item.get("timestamp")
+                    source_extra = (
+                        f" · {timestamp:.1f}s"
+                        if timestamp is not None
+                        else ""
+                    )
+
+                    if item["landmarks"] is not None:
+                        shown = draw_landmarks(
                             item["face"],
                             item["landmarks"],
                         )
-                        st.image(
-                            cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB),
-                            caption=f"Gesicht {item['index']} – Landmarks erkannt",
-                            use_container_width=True,
-                        )
-                        st.success("48/48 Landmark-Punkte erkannt")
                     else:
-                        st.image(
-                            cv2.cvtColor(item["face"], cv2.COLOR_BGR2RGB),
-                            caption=f"Gesicht {item['index']} – nicht auswertbar",
-                            use_container_width=True,
-                        )
-                        st.error("Landmarks konnten nicht zuverlässig bestimmt werden")
+                        shown = item["face"]
 
+                    st.image(
+                        cv2.cvtColor(shown, cv2.COLOR_BGR2RGB),
+                        caption=(
+                            f"Gesicht {item['index']} · "
+                            f"{item['source_name']}{source_extra}"
+                        ),
+                        use_container_width=True,
+                    )
+
+                    if item["status"] == "accepted":
+                        st.success(
+                            f"Verwendet · YOLO "
+                            f"{item['quality'].get('accepted') and analyses[item['index']-1].get('detector_confidence', 0) * 100:.0f}%"
+                        )
+                    elif item["status"] == "quality_rejected":
+                        st.warning(
+                            "Nicht für Score verwendet: "
+                            + ", ".join(item["quality"]["reasons"])
+                        )
+                    else:
+                        st.error(
+                            "Nicht auswertbar: 48 Landmarks konnten nicht bestimmt werden"
+                        )
 
 def show_manual_fgs():
     with st.expander("Manuelle FGS-Referenz anzeigen"):
@@ -717,10 +839,24 @@ def main():
 
     st.subheader("Session-Zusammenfassung")
 
-    col_a, col_b, col_c = st.columns(3)
+    image_files = sum(
+        1 for uploaded in uploads
+        if Path(uploaded.name).suffix.lower() in {".jpg", ".jpeg", ".png"}
+    )
+    video_files = len(uploads) - image_files
+
+    col_a, col_b, col_c, col_d = st.columns(4)
     col_a.metric("Dateien", len(uploads))
-    col_b.metric("Auswertbare Gesichter", len(all_analyses))
-    col_c.metric("Nicht auswertbare Dateien", len(failed_files))
+    col_b.metric("Bilder / Videos", f"{image_files} / {video_files}")
+    col_c.metric(
+        "Erkannte Gesichtsaufnahmen",
+        len(all_analyses),
+        help=(
+            "Ein Bild liefert normalerweise eine Aufnahme. "
+            "Aus Videos werden mehrere Frames derselben Katze ausgewertet."
+        ),
+    )
+    col_d.metric("Nicht auswertbare Dateien", len(failed_files))
 
     if not all_analyses:
         st.error(
@@ -759,9 +895,7 @@ def main():
             face_count=len(all_analyses),
         )
 
-    show_geometry_fgs_result(
-        [item["face"] for item in all_analyses[:12]]
-    )
+    show_geometry_fgs_result(all_analyses)
 
     if len(preview_faces) > 1:
         st.subheader("Erkannte Gesichter aus der Session")
