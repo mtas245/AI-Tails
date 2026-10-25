@@ -1,0 +1,13 @@
+streamlit
+ultralytics
+torch
+torchvision
+opencv-python
+numpy
+pandas
+Pillow
+pillow-heif
+scikit-learn
+openpyxl
+huggingface_hub
+ai-edge-litert
