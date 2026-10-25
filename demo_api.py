@@ -239,7 +239,7 @@ async def analyze(file: UploadFile = File(...)):
             "text": text,
         })
 
-    report = status_from_scores(scores, quality)
+    report = status_from_scores(geometry["scores"], q)
     report["note"] = (
         "AI-Tails erkennt Abweichungen in messbaren Gesichtsmerkmalen. "
         "Ein einzelnes Foto ist keine tierärztliche Diagnose und sollte im Kontext weiterer Signale betrachtet werden."
