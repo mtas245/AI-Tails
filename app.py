@@ -616,6 +616,82 @@ def show_geometry_fgs_result(analyses):
                 f"{info['reason']}"
             )
 
+    with st.expander("Was bedeuten die FGS-Merkmale für den Owner?"):
+        st.markdown(
+            """
+### So liest du die Punkte
+
+**0 Punkte**  
+Das Merkmal liegt nahe an der gesunden Referenz.
+
+**1 Punkt**  
+Das Merkmal weicht moderat von der gesunden Referenz ab.
+
+**2 Punkte**  
+Das Merkmal weicht deutlich von der gesunden Referenz ab.
+
+Die Punkte werden nicht einzeln als Diagnose interpretiert. Entscheidend ist das Muster über mehrere Merkmale und mehrere Bilder bzw. Video-Frames.
+
+---
+
+### Ohrenposition
+
+Bei einer entspannten Katze zeigen die Ohren meist eher nach vorne.  
+Bei Unwohlsein oder Schmerz können sie seitlicher stehen oder stärker nach außen rotieren.
+
+**In unserer Analyse wird gemessen:**  
+Ohrspreizung, Ohrwinkel und Asymmetrie im Vergleich zur Healthy-Baseline.
+
+---
+
+### Augenverengung
+
+Eine gesunde, entspannte Katze hat die Augen typischerweise offen.  
+Bei Schmerz können die Augen teilweise geschlossen oder stärker zusammengekniffen sein.
+
+**In unserer Analyse wird gemessen:**  
+Das Verhältnis aus Augenhöhe zu Augenbreite. Eine deutlich kleinere Augenöffnung erhöht den Score.
+
+---
+
+### Muzzle-/Maulspannung
+
+Bei einer entspannten Katze wirkt der Bereich um Maul und Schnauze eher weich und rund.  
+Bei Schmerz kann dieser Bereich gespannter und geometrisch kompakter wirken.
+
+**In unserer Analyse wird gemessen:**  
+Muzzle-Breite, Maulform, Verhältnis von Nase zu Maul und die Geometrie des unteren Gesichts.
+
+---
+
+### Whisker-/Muzzle-Region
+
+Bei einer entspannten Katze wirken Schnurrhaare und Whisker-Pad meist locker und symmetrisch.  
+Bei Schmerz können Schnurrhaare gerader, stärker nach vorne gerichtet oder enger zusammenliegend erscheinen.
+
+**In unserer aktuellen Analyse wird gemessen:**  
+Vor allem die Geometrie und Asymmetrie der Whisker-/Muzzle-Region. Einzelne Schnurrhaare werden aktuell noch nicht direkt als Landmark erfasst.
+
+---
+
+### Kopfposition
+
+Bei der Feline Grimace Scale wird bewertet, ob der Kopf über, auf oder unter der Schulterlinie gehalten wird.
+
+**Aktueller Stand:**  
+Dieses Merkmal wird noch nicht automatisch bewertet, weil dafür Körper- und Schulterkontext aus dem Originalbild notwendig ist.
+
+---
+
+### Wichtig für die Interpretation
+
+Ein einzelner hoher Wert bedeutet nicht automatisch, dass die Katze Schmerzen hat.  
+Das System sucht nach mehreren gleichzeitig auffälligen Merkmalen und vergleicht diese über mehrere Aufnahmen mit einer gesunden Referenz.
+
+Die Analyse ist ein Screening-Hinweis und ersetzt keine tierärztliche Beurteilung.
+"""
+        )
+
     st.caption(
         "0 = innerhalb der gesunden Referenz (<1σ), "
         "1 = moderate Abweichung (1–2σ), "
