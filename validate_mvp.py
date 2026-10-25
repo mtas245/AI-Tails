@@ -25,6 +25,9 @@ REQUIRED_MODULES = [
     "torchvision",
     "ultralytics",
     "huggingface_hub",
+    "fastapi",
+    "uvicorn",
+    "multipart",
 ]
 
 EXPECTED_SCHEMA_VERSION = "ai-tails.vision.v1"
