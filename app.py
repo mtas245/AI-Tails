@@ -43,14 +43,15 @@ CLASS_EMOJI = {
 @st.cache_resource
 def load_models():
     if not YOLO_MODEL.exists():
-        raise FileNotFoundError(f"YOLO model missing: {YOLO_MODEL}")
-    if not CLASSIFIER_MODEL.exists():
         raise FileNotFoundError(
-            f"Classifier missing: {CLASSIFIER_MODEL}\n"
-            "Run: python train_model.py"
+            f"YOLO model missing: {YOLO_MODEL}\n"
+            "Place the cat-face detector in models/cat_face_yolov8n.pt."
         )
 
     detector = YOLO(str(YOLO_MODEL))
+
+    if not CLASSIFIER_MODEL.exists():
+        return detector, None, None, None
 
     checkpoint = torch.load(
         CLASSIFIER_MODEL,
@@ -184,12 +185,15 @@ def analyze_image(detector, classifier, class_names, transform, image_bgr):
     if face is None:
         return None
 
-    probabilities = predict_face(
-        classifier,
-        class_names,
-        transform,
-        face,
-    )
+    probabilities = None
+
+    if classifier is not None and transform is not None:
+        probabilities = predict_face(
+            classifier,
+            class_names,
+            transform,
+            face,
+        )
 
     return {
         "face": face,
@@ -278,21 +282,30 @@ def analyze_video(
     if not faces:
         return []
 
-    probabilities_batch = predict_faces_batch(
-        classifier,
-        transform,
-        faces,
-    )
-
     analyses = []
 
-    for meta, probabilities in zip(face_meta, probabilities_batch):
-        analyses.append(
-            {
-                **meta,
-                "probabilities": probabilities,
-            }
+    if classifier is not None and transform is not None:
+        probabilities_batch = predict_faces_batch(
+            classifier,
+            transform,
+            faces,
         )
+
+        for meta, probabilities in zip(face_meta, probabilities_batch):
+            analyses.append(
+                {
+                    **meta,
+                    "probabilities": probabilities,
+                }
+            )
+    else:
+        for meta in face_meta:
+            analyses.append(
+                {
+                    **meta,
+                    "probabilities": None,
+                }
+            )
 
     return analyses
 
@@ -770,7 +783,11 @@ def main():
         st.error(str(exc))
         st.stop()
 
-    transform = classifier_transform(image_size)
+    transform = (
+        classifier_transform(image_size)
+        if classifier is not None
+        else None
+    )
 
     uploads = st.file_uploader(
         "Bilder und/oder Videos derselben Katze hochladen",
@@ -882,10 +899,19 @@ def main():
         show_manual_fgs()
         return
 
-    session_probabilities = np.mean(
-        [item["probabilities"] for item in all_analyses],
-        axis=0,
-    )
+    session_probabilities = None
+
+    if classifier is not None:
+        classifier_rows = [
+            item["probabilities"]
+            for item in all_analyses
+            if item.get("probabilities") is not None
+        ]
+        if classifier_rows:
+            session_probabilities = np.mean(
+                classifier_rows,
+                axis=0,
+            )
 
     best_item = max(
         all_analyses,
@@ -900,16 +926,17 @@ def main():
         width=420,
     )
 
-    with st.expander("Experimenteller Legacy-Classifier (nicht Teil der MVP-Hauptentscheidung)"):
-        show_ai_result(
-            class_names,
-            session_probabilities,
-            face_count=len(all_analyses),
-        )
-        st.warning(
-            "Dieser ältere 3-Klassen-Classifier generalisiert derzeit schwach auf "
-            "unbekannte Katzen und wird nicht als medizinische Sicherheit interpretiert."
-        )
+    if classifier is not None and session_probabilities is not None:
+        with st.expander("Experimenteller Legacy-Classifier (nicht Teil der MVP-Hauptentscheidung)"):
+            show_ai_result(
+                class_names,
+                session_probabilities,
+                face_count=len(all_analyses),
+            )
+            st.warning(
+                "Dieser ältere 3-Klassen-Classifier generalisiert derzeit schwach auf "
+                "unbekannte Katzen und wird nicht als medizinische Sicherheit interpretiert."
+            )
 
     vision_payload = show_geometry_fgs_result(all_analyses)
 
