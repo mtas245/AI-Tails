@@ -107,6 +107,38 @@ document.getElementById('close-landmarks').addEventListener('click',()=>{
   document.getElementById('landmark-panel').classList.remove('open');
 });
 
+const landmarkImage = document.getElementById('landmark-image');
+const imageModal = document.getElementById('image-modal');
+const imageModalImg = document.getElementById('image-modal-img');
+const closeImageModal = document.getElementById('close-image-modal');
+
+function closeFullscreenLandmarks(){
+  imageModal.classList.remove('open');
+  imageModal.setAttribute('aria-hidden','true');
+  imageModalImg.classList.remove('zoomed');
+}
+
+landmarkImage.addEventListener('click',()=>{
+  if(!landmarkImage.src) return;
+  imageModalImg.src = landmarkImage.src;
+  imageModal.classList.add('open');
+  imageModal.setAttribute('aria-hidden','false');
+});
+
+closeImageModal.addEventListener('click',closeFullscreenLandmarks);
+
+imageModal.addEventListener('click',(event)=>{
+  if(event.target === imageModal) closeFullscreenLandmarks();
+});
+
+imageModalImg.addEventListener('dblclick',()=>{
+  imageModalImg.classList.toggle('zoomed');
+});
+
+document.addEventListener('keydown',(event)=>{
+  if(event.key === 'Escape') closeFullscreenLandmarks();
+});
+
 function renderResult(data){
   const card = document.getElementById('status-card');
   card.className = 'status-card ' + data.status.level;
