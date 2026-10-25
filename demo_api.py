@@ -93,25 +93,32 @@ def quality(face_bgr: np.ndarray, detector_confidence: float):
 
 
 def status_from_score(score: float):
-    if score < 3.5:
+    if score < 2.5:
         return {
-            "level": "low",
-            "eyebrow": "Aktuelle Einschätzung",
-            "title": "Geringe Auffälligkeit",
-            "summary": "Die messbaren Gesichtssignale liegen überwiegend nahe an der gesunden Referenz.",
+            "level": "healthy",
+            "eyebrow": "AI-Tails Screening",
+            "title": "Healthy-like",
+            "summary": "Die aktuell messbaren Gesichtssignale liegen überwiegend nahe an der gesunden Referenz.",
         }
-    if score < 6.5:
+    if score < 5.0:
         return {
-            "level": "medium",
-            "eyebrow": "Aktuelle Einschätzung",
-            "title": "Beobachtung empfohlen",
-            "summary": "Mehrere FGS-orientierte Gesichtsmerkmale weichen moderat von der gesunden Referenz ab.",
+            "level": "slight",
+            "eyebrow": "AI-Tails Screening",
+            "title": "Slight indicators",
+            "summary": "Es sind leichte Abweichungen erkennbar. Einzelne Signale sollten im Verlauf weiter beobachtet werden.",
+        }
+    if score < 7.5:
+        return {
+            "level": "monitor",
+            "eyebrow": "AI-Tails Screening",
+            "title": "Monitoring",
+            "summary": "Mehrere Gesichtssignale weichen von der gesunden Referenz ab. Eine erneute Beobachtung ist sinnvoll.",
         }
     return {
-        "level": "high",
-        "eyebrow": "Aktuelle Einschätzung",
-        "title": "Deutliche Abweichungen",
-        "summary": "Mehrere messbare Gesichtsmerkmale weichen deutlich von der gesunden Referenz ab.",
+        "level": "vet",
+        "eyebrow": "AI-Tails Screening",
+        "title": "Vet check",
+        "summary": "Mehrere deutliche Abweichungen wurden erkannt. Eine tierärztliche Beurteilung sollte in Betracht gezogen werden.",
     }
 
 
