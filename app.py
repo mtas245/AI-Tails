@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import tempfile
+import json
 
 import cv2
 import numpy as np
@@ -12,12 +13,18 @@ from torch import nn
 from torchvision import transforms
 from torchvision.models import mobilenet_v3_small
 from ultralytics import YOLO
-from fgs_auto import estimate_fgs, DISPLAY_NAMES
+from fgs_geometry import (
+    HealthyBaseline,
+    extract_geometry_features,
+    score_fgs_geometry,
+)
+from landmark_detector import predict_landmarks, draw_landmarks
 
 
 ROOT = Path(__file__).resolve().parent
 YOLO_MODEL = ROOT / "models" / "cat_face_yolov8n.pt"
 CLASSIFIER_MODEL = ROOT / "models" / "health_classifier.pt"
+HEALTHY_BASELINE_FILE = ROOT / "models" / "healthy_geometry_baseline.json"
 
 CLASS_LABELS_DE = {
     "HEALTHY": "Geringes Risiko",
@@ -60,6 +67,24 @@ def load_models():
     classifier.eval()
 
     return detector, classifier, class_names, image_size
+
+
+@st.cache_resource
+def load_healthy_baseline():
+    if not HEALTHY_BASELINE_FILE.exists():
+        raise FileNotFoundError(
+            f"Healthy geometry baseline missing: {HEALTHY_BASELINE_FILE}\n"
+            "Run: python build_healthy_baseline.py"
+        )
+
+    payload = json.loads(
+        HEALTHY_BASELINE_FILE.read_text(encoding="utf-8")
+    )
+
+    return HealthyBaseline(
+        mean={k: float(v) for k, v in payload["mean"].items()},
+        std={k: float(v) for k, v in payload["std"].items()},
+    ), payload
 
 
 def bgr_to_pil(image_bgr):
@@ -292,8 +317,6 @@ def show_ai_result(class_names, probabilities, face_count: int):
     winner_index = int(np.argmax(probabilities))
     winner = class_names[winner_index]
     confidence = float(probabilities[winner_index])
-    fgs_proxy = estimate_fgs_proxy(class_names, probabilities)
-    proxy_interpretation, proxy_emoji = fgs_interpretation(int(round(fgs_proxy)))
 
     st.subheader("KI-Einschätzung")
     st.markdown(
@@ -301,17 +324,11 @@ def show_ai_result(class_names, probabilities, face_count: int):
         f"{CLASS_LABELS_DE[winner]}"
     )
 
-    metric_col1, metric_col2 = st.columns(2)
-    with metric_col1:
-        st.metric("KI-Konfidenz", f"{confidence * 100:.1f}%")
-    with metric_col2:
-        st.metric("Automatischer FGS-Proxy", f"{fgs_proxy:.1f}/10")
-
+    st.metric("Klassifikator-Konfidenz", f"{confidence * 100:.1f}%")
     st.caption(f"Ausgewertete Katzengesichter: {face_count}")
-    st.markdown(f"**{proxy_emoji} Proxy-Interpretation:** {proxy_interpretation}")
     st.caption(
-        "Der automatische FGS-Proxy wird aus den Modellwahrscheinlichkeiten "
-        "abgeleitet. Er ist noch kein echter FGS-Score der fünf einzelnen Action Units."
+        "Dieser Klassifikator ist ein experimenteller Zusatz. "
+        "Die erklärbare Hauptbewertung erfolgt unten über 48 Landmarks und die gesunde Referenz."
     )
 
     st.write("Klassenwahrscheinlichkeiten")
@@ -328,7 +345,7 @@ def show_ai_result(class_names, probabilities, face_count: int):
             "oder mehrere gute Aufnahmen verwendet werden."
         )
 
-    return winner, confidence, fgs_proxy
+    return winner, confidence
 
 
 def fgs_interpretation(score: int):
@@ -341,50 +358,133 @@ def fgs_interpretation(score: int):
     return "Starker Schmerz wahrscheinlich – tierärztliche Beurteilung empfohlen", "🔴"
 
 
-def show_auto_fgs_result(faces_bgr):
-    st.subheader("Automatische FGS-Bewertung")
-
-    face_images = [bgr_to_pil(face) for face in faces_bgr]
+def show_geometry_fgs_result(faces_bgr):
+    st.subheader("Erklärbare FGS-Geometrieanalyse")
 
     try:
-        result = estimate_fgs(face_images)
+        baseline, baseline_meta = load_healthy_baseline()
     except Exception as exc:
-        st.warning(
-            "Automatische FGS-Bewertung konnte nicht geladen werden. "
-            "Installiere ggf. transformers: python -m pip install transformers"
-        )
-        st.caption(str(exc))
+        st.error(str(exc))
         return
 
-    action_units = result["action_units"]
-    total = result["total"]
-    continuous_total = result["continuous_total"]
+    feature_rows = []
+    landmark_rows = []
+
+    for face in faces_bgr[:12]:
+        try:
+            landmarks = predict_landmarks(face)
+            features = extract_geometry_features(landmarks)
+            feature_rows.append(features)
+            landmark_rows.append((face, landmarks))
+        except Exception:
+            continue
+
+    if not feature_rows:
+        st.warning("Keine verwertbaren 48-Punkt-Landmarks gefunden.")
+        return
+
+    keys = feature_rows[0].keys()
+    session_features = {
+        key: float(np.median([row[key] for row in feature_rows]))
+        for key in keys
+    }
+
+    result = score_fgs_geometry(
+        session_features,
+        baseline,
+    )
+
+    scores = result["scores"]
+    explanations = result["explanations"]
 
     cols = st.columns(5)
+    order = [
+        ("ears", "Ohrenposition"),
+        ("eyes", "Augenverengung"),
+        ("muzzle", "Muzzle-Spannung"),
+        ("whiskers", "Whisker-/Muzzle-Region"),
+        ("head", "Kopfposition"),
+    ]
 
-    unit_order = ["ears", "eyes", "muzzle", "whiskers", "head"]
-
-    for column, unit in zip(cols, unit_order):
-        value = action_units[unit]["score"]
-        expected = action_units[unit]["expected_score"]
+    for column, (key, label) in zip(cols, order):
+        info = explanations[key]
+        score = scores[key]
 
         with column:
-            st.metric(
-                DISPLAY_NAMES[unit],
-                f"{value}/2",
-                help=f"Kontinuierliche ML-Schätzung: {expected:.2f}",
+            if score is None:
+                st.metric(label, "n/a")
+                st.caption("Schulter-/Körperkontext nötig")
+            else:
+                st.metric(label, f"{score}/2")
+                st.caption(
+                    f"{info['deviation_sigma']:.2f}σ Abweichung"
+                )
+
+    partial_total = result["partial_total"]
+    partial_max = result["partial_max"]
+
+    normalized_10 = (
+        partial_total / partial_max * 10.0
+        if partial_max > 0
+        else 0.0
+    )
+
+    score_col1, score_col2, score_col3 = st.columns(3)
+
+    with score_col1:
+        st.metric(
+            "Gemessener Geometrie-Score",
+            f"{partial_total}/{partial_max}",
+        )
+
+    with score_col2:
+        st.metric(
+            "Normalisiert",
+            f"{normalized_10:.1f}/10",
+        )
+
+    with score_col3:
+        st.metric(
+            "Gesunde Referenz",
+            f"{baseline_meta.get('healthy_cats', '?')} Katzen",
+        )
+
+    if normalized_10 < 3.5:
+        st.success("Geometrie liegt überwiegend nahe an der gesunden Referenz.")
+    elif normalized_10 < 6.5:
+        st.warning("Mehrere Gesichtsmerkmale weichen von der gesunden Referenz ab.")
+    else:
+        st.error("Deutliche geometrische Abweichungen gegenüber der gesunden Referenz.")
+
+    st.write("Warum kommt das System zu diesem Ergebnis?")
+
+    for key, label in order:
+        info = explanations[key]
+        if info["score"] is None:
+            st.write(f"- **{label}:** nicht bewertet – {info['reason']}")
+        else:
+            st.write(
+                f"- **{label}: {info['score']}/2** — "
+                f"{info['deviation_sigma']:.2f}σ Abweichung. "
+                f"{info['reason']}"
             )
 
-    interpretation, emoji = fgs_interpretation(total)
-
-    st.metric("Automatischer FGS-Gesamtscore", f"{total}/10")
-    st.markdown(f"### {emoji} {interpretation}")
-
     st.caption(
-        f"Kontinuierlicher ML-Score: {continuous_total:.2f}/10. "
-        "Dieser Wert wird automatisch aus einem vortrainierten Vision-Modell "
-        "abgeleitet und ist noch nicht klinisch validiert."
+        "0 = innerhalb der gesunden Referenz (<1σ), "
+        "1 = moderate Abweichung (1–2σ), "
+        "2 = starke Abweichung (≥2σ). "
+        "Die Schwellen sind für den Makeathon transparent gewählt und noch nicht klinisch validiert."
     )
+
+    if landmark_rows:
+        best_face, best_landmarks = landmark_rows[0]
+        overlay = draw_landmarks(best_face, best_landmarks)
+        with st.expander("48 Landmark-Punkte anzeigen"):
+            st.image(
+                cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB),
+                caption="CatFLW 48-Punkt-Geometrie",
+                use_container_width=True,
+            )
 
 
 def show_manual_fgs():
@@ -593,7 +693,7 @@ def main():
             face_count=len(all_analyses),
         )
 
-    show_auto_fgs_result(
+    show_geometry_fgs_result(
         [item["face"] for item in all_analyses[:12]]
     )
 
@@ -620,8 +720,9 @@ def main():
     st.caption(
         "Automatische Session-Einschätzung = Mittelwert über alle erkannten "
         "Gesichter der hochgeladenen Bilder und Video-Frames. "
-        "Der FGS-Proxy ist eine KI-Näherung und noch kein automatisch "
-        "bestimmter echter FGS-Action-Unit-Score."
+        "Die Hauptbewertung nutzt 48 Gesichtspunkte und den Vergleich "
+        "mit der lokal aufgebauten gesunden Referenz. "
+        "Kopfposition benötigt zusätzlich Körper-/Schulterkontext."
     )
 
 
