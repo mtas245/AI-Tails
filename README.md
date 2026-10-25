@@ -2,38 +2,45 @@
 
 AI-Tails is a MAKEathon proof of concept for explainable cat facial screening.
 
-## MVP scope
+## What the submission contains
 
-The Vision component:
+The current submission includes two interfaces:
 
-1. accepts one or more images and videos of the same cat;
-2. detects the cat face with YOLO;
-3. predicts 48 CatFLW facial landmarks;
-4. computes FGS-oriented geometric features;
-5. compares those measurements with a local healthy reference baseline;
-6. aggregates multiple observations robustly using the median;
-7. exports a versioned JSON payload for Graphwise / the downstream agent.
+- **Primary demo web app:** custom mobile frontend + FastAPI backend
+- **Technical MVP app:** Streamlit interface for development and inspection
 
-The Vision component is a **screening / measurement system**, not a veterinary diagnosis.
+The Vision pipeline itself is shared by both interfaces.
 
-## Architecture
+## Vision pipeline
 
 ```text
-Images / videos
+Photo / video
     -> YOLO cat-face detector
     -> 48 CatFLW landmarks
-    -> geometric features
-    -> healthy-baseline comparison
-    -> quality filtering + multi-frame aggregation
-    -> ai-tails.vision.v1 JSON
-    -> Graphwise Knowledge Graph
-    -> Agent
-    -> Owner / vet explanation
+    -> geometric facial features
+    -> healthy-reference comparison
+    -> conservative multi-feature screening logic
+    -> result + landmark visualization
 ```
+
+The system is a **screening / measurement prototype**, not a veterinary diagnosis.
+
+## Current screening states
+
+The demo reports one of four user-facing screening states:
+
+- Healthy-like
+- Slight indicators
+- Monitoring
+- Vet check
+
+A low-quality image can instead return **Analyse unsicher**.
+
+These states are engineering rules for the MAKEathon prototype and are not clinically validated diagnostic categories.
 
 ## Required local assets
 
-These files are intentionally not committed to the public repository:
+These files are intentionally excluded from the public repository:
 
 ```text
 models/cat_face_yolov8n.pt
@@ -46,50 +53,102 @@ Optional legacy model:
 models/health_classifier.pt
 ```
 
-The legacy 3-class classifier is not part of the MVP main decision and the app runs without it.
+The legacy classifier is not used for the primary demo decision.
 
 ## Setup
 
+Recommended on Windows PowerShell:
+
 ```powershell
+cd C:\Users\Kirta\AI-Tails
+.\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 ```
 
-If the healthy baseline has not been created yet:
-
-```powershell
-python build_healthy_baseline.py
-```
-
-Run the demo:
-
-```powershell
-python -m streamlit run app.py
-```
-
-## Pre-pitch check
+## Validate the installation
 
 ```powershell
 python validate_mvp.py
 ```
 
-The check verifies the required local files, healthy-baseline schema, importable Python modules, and integration contract version.
+## Run the primary demo
+
+```powershell
+python -m uvicorn demo_api:app --host 0.0.0.0 --port 8000
+```
+
+Open:
+
+```text
+http://localhost:8000
+```
+
+The mobile demo provides:
+
+- live camera
+- 1× / 2× / 3× zoom controls
+- image upload fallback
+- face detection quality
+- 48 facial landmarks
+- FGS-oriented feature scores
+- four-level screening status
+- large / fullscreen landmark viewer
+
+## Optional public demo via Cloudflare Tunnel
+
+```powershell
+& "$env:USERPROFILE\cloudflared.exe" tunnel --url http://localhost:8000
+```
+
+Cloudflare prints a temporary public HTTPS URL.
+
+Generate a QR code for that URL:
+
+```powershell
+python make_qr.py https://YOUR-URL.trycloudflare.com
+```
+
+Quick Tunnel URLs change whenever the tunnel is restarted.
+
+## Technical Streamlit MVP
+
+The older technical interface remains available:
+
+```powershell
+python -m streamlit run app.py
+```
+
+It exposes additional development information and the versioned downstream JSON contract.
 
 ## Integration
 
 See [MVP_INTEGRATION.md](MVP_INTEGRATION.md).
 
-The stable downstream interface is:
+Stable downstream schema:
 
 ```text
-schema_version = ai-tails.vision.v1
+ai-tails.vision.v1
 ```
 
-Downstream Graphwise / agent components should integrate against the JSON schema, not Streamlit text.
+## Important limitations
 
-## Current limitations
+- Healthy reference currently contains only a small number of individual cats.
+- Results can vary with camera angle, zoom, pose, breed morphology, blur, occlusion and lighting.
+- Current live demo evaluates one captured image; multi-frame stabilization is future work.
+- Head position is not automatically scored because correct FGS head position needs shoulder/body context.
+- Whisker change is approximated from muzzle-region geometry.
+- Thresholds and screening rules are transparent engineering rules, not clinically validated FGS thresholds.
+- A result must not be interpreted as a diagnosis of pain or disease.
 
-- Healthy reference currently contains only a small number of cats.
-- Head position is not automatically scored because true FGS head position needs shoulder/body context.
-- Whisker change is approximated from whisker-pad / muzzle geometry.
-- Project thresholds are transparent engineering thresholds, not clinically validated FGS thresholds.
-- Results may be affected by breed morphology, head pose, occlusion, blur, lighting, and camera angle.
+## Main files
+
+```text
+demo_api.py              FastAPI demo backend
+frontend/                Mobile demo UI
+fgs_geometry.py          Interpretable geometry + scoring
+landmark_detector.py     48-point CatFLW landmark inference
+vision_contract.py       Stable downstream JSON contract
+app.py                   Technical Streamlit MVP
+validate_mvp.py          Local pre-demo validation
+make_qr.py               QR-code helper
+```
