@@ -336,62 +336,59 @@ def fgs_interpretation(score: int):
 
 
 def show_manual_fgs():
-    st.divider()
-    st.subheader("Feline Grimace Scale (FGS)")
-
-    st.caption(
-        "Die FGS bewertet fünf Action Units jeweils von 0 bis 2. "
-        "Diese Werte werden hier bewusst nicht automatisch erfunden, "
-        "da unser aktueller Trainingsdatensatz noch keine Action-Unit-Labels enthält."
-    )
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        ears = st.select_slider(
-            "Ohrenposition",
-            options=[0, 1, 2],
-            value=0,
-            help="0 = nach vorne, 1 = leicht auseinander, 2 = nach außen rotiert",
-        )
-        eyes = st.select_slider(
-            "Augenverengung",
-            options=[0, 1, 2],
-            value=0,
-            help="0 = offen, 1 = teilweise geschlossen, 2 = zusammengekniffen",
-        )
-        muzzle = st.select_slider(
-            "Muzzle-/Maulspannung",
-            options=[0, 1, 2],
-            value=0,
-            help="0 = entspannt/rund, 1 = leichte Spannung, 2 = angespannt/elliptisch",
+    with st.expander("Manuelle FGS-Referenz anzeigen"):
+        st.caption(
+            "Optionaler Referenzbereich: Hier kannst du die fünf FGS-Action-Units "
+            "manuell mit 0 bis 2 bewerten. Dieser manuelle Score ist getrennt von "
+            "der automatischen KI-Session-Auswertung."
         )
 
-    with col2:
-        whiskers = st.select_slider(
-            "Schnurrhaare",
-            options=[0, 1, 2],
-            value=0,
-            help="0 = locker/gebogen, 1 = gerader/näher zusammen, 2 = gerade nach vorne",
+        col1, col2 = st.columns(2)
+
+        with col1:
+            ears = st.select_slider(
+                "Ohrenposition",
+                options=[0, 1, 2],
+                value=0,
+                help="0 = nach vorne, 1 = leicht auseinander, 2 = nach außen rotiert",
+            )
+            eyes = st.select_slider(
+                "Augenverengung",
+                options=[0, 1, 2],
+                value=0,
+                help="0 = offen, 1 = teilweise geschlossen, 2 = zusammengekniffen",
+            )
+            muzzle = st.select_slider(
+                "Muzzle-/Maulspannung",
+                options=[0, 1, 2],
+                value=0,
+                help="0 = entspannt/rund, 1 = leichte Spannung, 2 = angespannt/elliptisch",
+            )
+
+        with col2:
+            whiskers = st.select_slider(
+                "Schnurrhaare",
+                options=[0, 1, 2],
+                value=0,
+                help="0 = locker/gebogen, 1 = gerader/näher zusammen, 2 = gerade nach vorne",
+            )
+            head = st.select_slider(
+                "Kopfposition",
+                options=[0, 1, 2],
+                value=0,
+                help="0 = über Schulterlinie, 1 = auf Schulterlinie, 2 = darunter/gesenkt",
+            )
+
+        total = ears + eyes + muzzle + whiskers + head
+        interpretation, emoji = fgs_interpretation(total)
+
+        st.metric("Manueller FGS-Gesamtscore", f"{total}/10")
+        st.markdown(f"### {emoji} {interpretation}")
+
+        st.caption(
+            "Dieser Bereich ist nur eine manuelle FGS-Referenz und wird nicht "
+            "automatisch aus den hochgeladenen Dateien berechnet."
         )
-        head = st.select_slider(
-            "Kopfposition",
-            options=[0, 1, 2],
-            value=0,
-            help="0 = über Schulterlinie, 1 = auf Schulterlinie, 2 = darunter/gesenkt",
-        )
-
-    total = ears + eyes + muzzle + whiskers + head
-    interpretation, emoji = fgs_interpretation(total)
-
-    st.metric("FGS-Gesamtscore", f"{total}/10")
-    st.markdown(f"### {emoji} {interpretation}")
-
-    st.caption(
-        "FGS wurde für akute Schmerzen entwickelt. "
-        "Stress, Angst, Sedierung und chronische Erkrankungen können die "
-        "Interpretation beeinflussen."
-    )
 
 
 def main():
@@ -403,8 +400,8 @@ def main():
 
     st.title("🐱 AI-Tails – FGS Screening Demo")
     st.write(
-        "Kamera-basierte Einschätzung von schmerzbezogenen "
-        "Gesichtsveränderungen bei Katzen."
+        "Mehrere Bilder und Videos derselben Katze werden gemeinsam als "
+        "eine Untersuchungssession ausgewertet."
     )
 
     st.info(
@@ -420,122 +417,155 @@ def main():
 
     transform = classifier_transform(image_size)
 
-    uploaded = st.file_uploader(
-        "Katzenbild oder Video hochladen",
+    uploads = st.file_uploader(
+        "Bilder und/oder Videos derselben Katze hochladen",
         type=["jpg", "jpeg", "png", "mp4", "mov", "m4v", "avi"],
+        accept_multiple_files=True,
+        help="Du kannst mehrere Dateien derselben Katze gleichzeitig auswählen.",
     )
 
-    if uploaded is None:
+    if not uploads:
+        st.caption(
+            "Noch keine Session geladen. Wähle mehrere Bilder oder Videos "
+            "derselben Katze aus."
+        )
         show_manual_fgs()
         return
 
-    suffix = Path(uploaded.name).suffix.lower()
+    all_analyses = []
+    failed_files = []
+    preview_faces = []
 
-    if suffix in {".jpg", ".jpeg", ".png"}:
-        image_bytes = np.frombuffer(uploaded.read(), np.uint8)
-        image_bgr = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
+    with st.spinner(f"{len(uploads)} Datei(en) werden gemeinsam analysiert …"):
+        for uploaded in uploads:
+            suffix = Path(uploaded.name).suffix.lower()
 
-        if image_bgr is None:
-            st.error("Bild konnte nicht gelesen werden.")
-            return
+            if suffix in {".jpg", ".jpeg", ".png"}:
+                image_bytes = np.frombuffer(uploaded.getvalue(), np.uint8)
+                image_bgr = cv2.imdecode(image_bytes, cv2.IMREAD_COLOR)
 
+                if image_bgr is None:
+                    failed_files.append(uploaded.name)
+                    continue
+
+                result = analyze_image(
+                    detector,
+                    classifier,
+                    class_names,
+                    transform,
+                    image_bgr,
+                )
+
+                if result is None:
+                    failed_files.append(uploaded.name)
+                    continue
+
+                result["source_name"] = uploaded.name
+                result["source_type"] = "image"
+                all_analyses.append(result)
+                preview_faces.append(result)
+
+            else:
+                with tempfile.NamedTemporaryFile(
+                    suffix=suffix,
+                    delete=False,
+                ) as temp:
+                    temp.write(uploaded.getbuffer())
+                    temp_path = temp.name
+
+                analyses = analyze_video(
+                    detector,
+                    classifier,
+                    class_names,
+                    transform,
+                    temp_path,
+                )
+
+                if not analyses:
+                    failed_files.append(uploaded.name)
+                    continue
+
+                for item in analyses:
+                    item["source_name"] = uploaded.name
+                    item["source_type"] = "video"
+                    all_analyses.append(item)
+
+                preview_faces.append(
+                    max(
+                        analyses,
+                        key=lambda item: item["detector_confidence"],
+                    )
+                )
+
+    st.subheader("Session-Zusammenfassung")
+
+    col_a, col_b, col_c = st.columns(3)
+    col_a.metric("Dateien", len(uploads))
+    col_b.metric("Auswertbare Gesichter", len(all_analyses))
+    col_c.metric("Nicht auswertbare Dateien", len(failed_files))
+
+    if not all_analyses:
+        st.error(
+            "In den hochgeladenen Dateien wurde kein auswertbares Katzengesicht erkannt."
+        )
+        if failed_files:
+            st.write("Nicht auswertbar:", ", ".join(failed_files))
+        show_manual_fgs()
+        return
+
+    session_probabilities = np.mean(
+        [item["probabilities"] for item in all_analyses],
+        axis=0,
+    )
+
+    left, right = st.columns([1, 1])
+
+    with left:
+        best_item = max(
+            all_analyses,
+            key=lambda item: item["detector_confidence"],
+        )
         st.image(
-            cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB),
-            caption="Originalaufnahme",
+            cv2.cvtColor(best_item["face"], cv2.COLOR_BGR2RGB),
+            caption=(
+                f"Bestes erkanntes Gesicht aus {best_item['source_name']} "
+                f"(YOLO {best_item['detector_confidence'] * 100:.1f}%)"
+            ),
             use_container_width=True,
         )
 
-        result = analyze_image(
-            detector,
-            classifier,
+    with right:
+        show_ai_result(
             class_names,
-            transform,
-            image_bgr,
+            session_probabilities,
+            face_count=len(all_analyses),
         )
 
-        if result is None:
-            st.error("Kein Katzengesicht erkannt.")
-        else:
-            col1, col2 = st.columns([1, 1])
+    if len(preview_faces) > 1:
+        st.subheader("Erkannte Gesichter aus der Session")
+        columns = st.columns(min(4, len(preview_faces)))
 
-            with col1:
+        for index, item in enumerate(preview_faces[:8]):
+            with columns[index % len(columns)]:
                 st.image(
-                    cv2.cvtColor(result["face"], cv2.COLOR_BGR2RGB),
-                    caption=(
-                        "Erkanntes Katzengesicht "
-                        f"(YOLO {result['detector_confidence'] * 100:.1f}%)"
-                    ),
+                    cv2.cvtColor(item["face"], cv2.COLOR_BGR2RGB),
+                    caption=item["source_name"],
                     use_container_width=True,
                 )
 
-            with col2:
-                show_ai_result(
-                    class_names,
-                    result["probabilities"],
-                    face_count=1,
-                )
-
-    else:
-        st.video(uploaded)
-
-        with tempfile.NamedTemporaryFile(
-            suffix=suffix,
-            delete=False,
-        ) as temp:
-            temp.write(uploaded.getbuffer())
-            temp_path = temp.name
-
-        with st.spinner("Video wird analysiert …"):
-            analyses = analyze_video(
-                detector,
-                classifier,
-                class_names,
-                transform,
-                temp_path,
-            )
-
-        if not analyses:
-            st.error("Im Video wurde kein auswertbares Katzengesicht erkannt.")
-        else:
-            probabilities = np.mean(
-                [item["probabilities"] for item in analyses],
-                axis=0,
-            )
-
-            best_item = max(
-                analyses,
-                key=lambda item: item["detector_confidence"],
-            )
-
-            col1, col2 = st.columns([1, 1])
-
-            with col1:
-                st.image(
-                    cv2.cvtColor(
-                        best_item["face"],
-                        cv2.COLOR_BGR2RGB,
-                    ),
-                    caption=(
-                        "Bestes erkanntes Gesicht "
-                        f"bei {best_item['timestamp']:.1f} s"
-                    ),
-                    use_container_width=True,
-                )
-
-            with col2:
-                show_ai_result(
-                    class_names,
-                    probabilities,
-                    face_count=len(analyses),
-                )
+    if failed_files:
+        with st.expander("Nicht auswertbare Dateien"):
+            for name in failed_files:
+                st.write(f"- {name}")
 
     show_manual_fgs()
 
     st.divider()
     st.caption(
-        "FGS-orientierter Forschungsprototyp. "
-        "Die automatische KI-Klasse basiert aktuell auf einem kleinen "
-        "Trainingsdatensatz und ersetzt keine klinische Untersuchung."
+        "Automatische Session-Einschätzung = Mittelwert über alle erkannten "
+        "Gesichter der hochgeladenen Bilder und Video-Frames. "
+        "Der FGS-Proxy ist eine KI-Näherung und noch kein automatisch "
+        "bestimmter echter FGS-Action-Unit-Score."
     )
 
 
