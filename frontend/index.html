@@ -103,7 +103,7 @@
           </div>
           <button id="close-landmarks" class="icon-btn">×</button>
         </div>
-        <img id="landmark-image" class="preview-image" alt="Landmark-Overlay">
+        <img id="landmark-image" class="preview-image landmark-preview clickable-image" alt="Landmark-Overlay" title="Zum Vergrössern antippen">
         <p class="microcopy">Augen, Ohren, Nase und Maul werden als relative Geometrie ausgewertet. Die Punkte selbst sind keine Diagnose.</p>
       </section>
 
@@ -114,6 +114,14 @@
         <div class="notice">AI-Tails unterstützt das Gesundheitsbewusstsein und tierärztliche Gespräche. Es ersetzt keine tierärztliche Diagnose oder Behandlung.</div>
       </section>
     </section>
+
+    <div id="image-modal" class="image-modal" aria-hidden="true">
+      <button id="close-image-modal" class="image-modal-close" aria-label="Vollbild schliessen">×</button>
+      <div class="image-modal-stage">
+        <img id="image-modal-img" class="image-modal-img" alt="Landmark-Ansicht gross">
+      </div>
+      <div class="image-modal-hint">Mit zwei Fingern zoomen oder doppeltippen</div>
+    </div>
 
     <footer>MAKEathon Vision Demo · AI-Tails</footer>
   </main>
