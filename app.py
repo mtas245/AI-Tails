@@ -19,6 +19,7 @@ from fgs_geometry import (
     score_fgs_geometry,
 )
 from landmark_detector import predict_landmarks, draw_landmarks
+from vision_contract import build_vision_payload
 
 
 ROOT = Path(__file__).resolve().parent
@@ -295,21 +296,6 @@ def analyze_video(
 
     return analyses
 
-
-def estimate_fgs_proxy(class_names, probabilities):
-    probabilities = np.asarray(probabilities, dtype=float)
-
-    anchors = {
-        "HEALTHY": 1.5,
-        "MONITOR": 5.5,
-        "VET_CHECK": 9.0,
-    }
-
-    score = 0.0
-    for class_name, probability in zip(class_names, probabilities):
-        score += anchors[class_name] * float(probability)
-
-    return float(np.clip(score, 0.0, 10.0))
 
 
 def show_ai_result(class_names, probabilities, face_count: int):
@@ -616,79 +602,14 @@ def show_geometry_fgs_result(analyses):
                 f"{info['reason']}"
             )
 
-    with st.expander("Was bedeuten die FGS-Merkmale für den Owner?"):
+    with st.expander("Wie werden diese Merkmale später interpretiert?"):
         st.markdown(
             """
-### So liest du die Punkte
+Die Vision-Pipeline liefert hier **Messwerte und Abweichungen**, noch keine medizinische Diagnose.
 
-**0 Punkte**  
-Das Merkmal liegt nahe an der gesunden Referenz.
+Im Gesamtsystem werden diese Werte an den **Graphwise Knowledge Graph** übergeben. Dort kann fachliches Wissen berücksichtigen, dass ein einzelnes Merkmal mehrere mögliche Erklärungen haben kann. Beispiel: stärker geschlossene Augen können zu Schmerz passen, aber auch bei Müdigkeit auftreten. Erst die Kombination mehrerer Merkmale und zusätzlicher Kontextdaten soll interpretiert werden.
 
-**1 Punkt**  
-Das Merkmal weicht moderat von der gesunden Referenz ab.
-
-**2 Punkte**  
-Das Merkmal weicht deutlich von der gesunden Referenz ab.
-
-Die Punkte werden nicht einzeln als Diagnose interpretiert. Entscheidend ist das Muster über mehrere Merkmale und mehrere Bilder bzw. Video-Frames.
-
----
-
-### Ohrenposition
-
-Bei einer entspannten Katze zeigen die Ohren meist eher nach vorne.  
-Bei Unwohlsein oder Schmerz können sie seitlicher stehen oder stärker nach außen rotieren.
-
-**In unserer Analyse wird gemessen:**  
-Ohrspreizung, Ohrwinkel und Asymmetrie im Vergleich zur Healthy-Baseline.
-
----
-
-### Augenverengung
-
-Eine gesunde, entspannte Katze hat die Augen typischerweise offen.  
-Bei Schmerz können die Augen teilweise geschlossen oder stärker zusammengekniffen sein.
-
-**In unserer Analyse wird gemessen:**  
-Das Verhältnis aus Augenhöhe zu Augenbreite. Eine deutlich kleinere Augenöffnung erhöht den Score.
-
----
-
-### Muzzle-/Maulspannung
-
-Bei einer entspannten Katze wirkt der Bereich um Maul und Schnauze eher weich und rund.  
-Bei Schmerz kann dieser Bereich gespannter und geometrisch kompakter wirken.
-
-**In unserer Analyse wird gemessen:**  
-Muzzle-Breite, Maulform, Verhältnis von Nase zu Maul und die Geometrie des unteren Gesichts.
-
----
-
-### Whisker-/Muzzle-Region
-
-Bei einer entspannten Katze wirken Schnurrhaare und Whisker-Pad meist locker und symmetrisch.  
-Bei Schmerz können Schnurrhaare gerader, stärker nach vorne gerichtet oder enger zusammenliegend erscheinen.
-
-**In unserer aktuellen Analyse wird gemessen:**  
-Vor allem die Geometrie und Asymmetrie der Whisker-/Muzzle-Region. Einzelne Schnurrhaare werden aktuell noch nicht direkt als Landmark erfasst.
-
----
-
-### Kopfposition
-
-Bei der Feline Grimace Scale wird bewertet, ob der Kopf über, auf oder unter der Schulterlinie gehalten wird.
-
-**Aktueller Stand:**  
-Dieses Merkmal wird noch nicht automatisch bewertet, weil dafür Körper- und Schulterkontext aus dem Originalbild notwendig ist.
-
----
-
-### Wichtig für die Interpretation
-
-Ein einzelner hoher Wert bedeutet nicht automatisch, dass die Katze Schmerzen hat.  
-Das System sucht nach mehreren gleichzeitig auffälligen Merkmalen und vergleicht diese über mehrere Aufnahmen mit einer gesunden Referenz.
-
-Die Analyse ist ein Screening-Hinweis und ersetzt keine tierärztliche Beurteilung.
+Der nachgelagerte Agent formuliert daraus anschließend eine verständliche Erklärung für Owner oder Tierarzt.
 """
         )
 
@@ -698,6 +619,22 @@ Die Analyse ist ein Screening-Hinweis und ersetzt keine tierärztliche Beurteilu
         "2 = starke Abweichung (≥2σ). "
         "Die Session-Merkmale werden robust über den Median der akzeptierten "
         "Gesichter zusammengefasst. Die Schwellen sind noch nicht klinisch validiert."
+    )
+
+    vision_payload = build_vision_payload(
+        scores=scores,
+        explanations=explanations,
+        normalized_score=normalized_10,
+        partial_total=partial_total,
+        partial_max=partial_max,
+        accepted_count=accepted_count,
+        detected_count=len(landmark_results),
+        landmark_success_count=landmark_success_count,
+        quality_rejected_count=quality_rejected_count,
+        landmark_failed_count=landmark_failed_count,
+        stability_index=stability_index,
+        baseline_cats=baseline_meta.get("healthy_cats", "?"),
+        session_features=session_features,
     )
 
     if landmark_results:
@@ -750,6 +687,8 @@ Die Analyse ist ein Screening-Hinweis und ersetzt keine tierärztliche Beurteilu
                         st.error(
                             "Nicht auswertbar: 48 Landmarks konnten nicht bestimmt werden"
                         )
+
+    return vision_payload
 
 def show_manual_fgs():
     with st.expander("Manuelle FGS-Referenz anzeigen"):
@@ -948,30 +887,64 @@ def main():
         axis=0,
     )
 
-    left, right = st.columns([1, 1])
+    best_item = max(
+        all_analyses,
+        key=lambda item: item["detector_confidence"],
+    )
+    st.image(
+        cv2.cvtColor(best_item["face"], cv2.COLOR_BGR2RGB),
+        caption=(
+            f"Bestes erkanntes Gesicht aus {best_item['source_name']} "
+            f"(YOLO {best_item['detector_confidence'] * 100:.1f}%)"
+        ),
+        width=420,
+    )
 
-    with left:
-        best_item = max(
-            all_analyses,
-            key=lambda item: item["detector_confidence"],
-        )
-        st.image(
-            cv2.cvtColor(best_item["face"], cv2.COLOR_BGR2RGB),
-            caption=(
-                f"Bestes erkanntes Gesicht aus {best_item['source_name']} "
-                f"(YOLO {best_item['detector_confidence'] * 100:.1f}%)"
-            ),
-            use_container_width=True,
-        )
-
-    with right:
+    with st.expander("Experimenteller Legacy-Classifier (nicht Teil der MVP-Hauptentscheidung)"):
         show_ai_result(
             class_names,
             session_probabilities,
             face_count=len(all_analyses),
         )
+        st.warning(
+            "Dieser ältere 3-Klassen-Classifier generalisiert derzeit schwach auf "
+            "unbekannte Katzen und wird nicht als medizinische Sicherheit interpretiert."
+        )
 
-    show_geometry_fgs_result(all_analyses)
+    vision_payload = show_geometry_fgs_result(all_analyses)
+
+    if vision_payload is not None:
+        st.subheader("Vision-Output für Graphwise / Agent")
+        st.caption(
+            "Dieser JSON-Output ist die stabile Schnittstelle des Vision-MVPs. "
+            "Er enthält Messungen und Qualitätsdaten, keine medizinische Diagnose."
+        )
+
+        payload_json = json.dumps(
+            vision_payload,
+            indent=2,
+            ensure_ascii=False,
+        )
+
+        col_json_a, col_json_b = st.columns([1, 3])
+
+        with col_json_a:
+            st.download_button(
+                "JSON exportieren",
+                data=payload_json,
+                file_name="ai_tails_vision_output.json",
+                mime="application/json",
+                use_container_width=True,
+            )
+
+        with col_json_b:
+            st.code(
+                f"schema_version: {vision_payload['schema_version']}",
+                language="text",
+            )
+
+        with st.expander("Technischen JSON-Output anzeigen"):
+            st.json(vision_payload)
 
     if len(preview_faces) > 1:
         st.subheader("Erkannte Gesichter aus der Session")
@@ -994,7 +967,7 @@ def main():
 
     st.divider()
     st.caption(
-        "Automatische Session-Einschätzung = Mittelwert über alle erkannten "
+        "Session = mehrere erkannte Gesichtsaufnahmen aus Bildern und Video-Frames. "
         "Gesichter der hochgeladenen Bilder und Video-Frames. "
         "Die Hauptbewertung nutzt 48 Gesichtspunkte und den Vergleich "
         "mit der lokal aufgebauten gesunden Referenz. "
