@@ -12,6 +12,7 @@ from torch import nn
 from torchvision import transforms
 from torchvision.models import mobilenet_v3_small
 from ultralytics import YOLO
+from fgs_auto import estimate_fgs, DISPLAY_NAMES
 
 
 ROOT = Path(__file__).resolve().parent
@@ -59,6 +60,11 @@ def load_models():
     classifier.eval()
 
     return detector, classifier, class_names, image_size
+
+
+def bgr_to_pil(image_bgr):
+    rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    return Image.fromarray(rgb)
 
 
 def classifier_transform(image_size: int):
@@ -335,6 +341,52 @@ def fgs_interpretation(score: int):
     return "Starker Schmerz wahrscheinlich – tierärztliche Beurteilung empfohlen", "🔴"
 
 
+def show_auto_fgs_result(faces_bgr):
+    st.subheader("Automatische FGS-Bewertung")
+
+    face_images = [bgr_to_pil(face) for face in faces_bgr]
+
+    try:
+        result = estimate_fgs(face_images)
+    except Exception as exc:
+        st.warning(
+            "Automatische FGS-Bewertung konnte nicht geladen werden. "
+            "Installiere ggf. transformers: python -m pip install transformers"
+        )
+        st.caption(str(exc))
+        return
+
+    action_units = result["action_units"]
+    total = result["total"]
+    continuous_total = result["continuous_total"]
+
+    cols = st.columns(5)
+
+    unit_order = ["ears", "eyes", "muzzle", "whiskers", "head"]
+
+    for column, unit in zip(cols, unit_order):
+        value = action_units[unit]["score"]
+        expected = action_units[unit]["expected_score"]
+
+        with column:
+            st.metric(
+                DISPLAY_NAMES[unit],
+                f"{value}/2",
+                help=f"Kontinuierliche ML-Schätzung: {expected:.2f}",
+            )
+
+    interpretation, emoji = fgs_interpretation(total)
+
+    st.metric("Automatischer FGS-Gesamtscore", f"{total}/10")
+    st.markdown(f"### {emoji} {interpretation}")
+
+    st.caption(
+        f"Kontinuierlicher ML-Score: {continuous_total:.2f}/10. "
+        "Dieser Wert wird automatisch aus einem vortrainierten Vision-Modell "
+        "abgeleitet und ist noch nicht klinisch validiert."
+    )
+
+
 def show_manual_fgs():
     with st.expander("Manuelle FGS-Referenz anzeigen"):
         st.caption(
@@ -540,6 +592,10 @@ def main():
             session_probabilities,
             face_count=len(all_analyses),
         )
+
+    show_auto_fgs_result(
+        [item["face"] for item in all_analyses[:12]]
+    )
 
     if len(preview_faces) > 1:
         st.subheader("Erkannte Gesichter aus der Session")
