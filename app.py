@@ -74,17 +74,11 @@ def classifier_transform(image_size: int):
     )
 
 
-def detect_face(detector, image_bgr):
-    results = detector.predict(
-        source=image_bgr,
-        conf=0.25,
-        verbose=False,
-    )
-
-    if not results or len(results[0].boxes) == 0:
+def crop_face_from_result(result, image_bgr):
+    if result is None or len(result.boxes) == 0:
         return None, None
 
-    boxes = results[0].boxes
+    boxes = result.boxes
     coords = boxes.xyxy.cpu().numpy()
     confidences = boxes.conf.cpu().numpy()
 
@@ -114,16 +108,43 @@ def detect_face(detector, image_bgr):
     return crop, float(confidences[index])
 
 
-def predict_face(classifier, class_names, transform, face_bgr):
-    rgb = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB)
-    image = Image.fromarray(rgb)
-    tensor = transform(image).unsqueeze(0)
+def detect_face(detector, image_bgr):
+    results = detector.predict(
+        source=image_bgr,
+        conf=0.25,
+        imgsz=416,
+        verbose=False,
+    )
 
-    with torch.no_grad():
-        logits = classifier(tensor)
-        probabilities = torch.softmax(logits, dim=1)[0].cpu().numpy()
+    if not results:
+        return None, None
+
+    return crop_face_from_result(results[0], image_bgr)
+
+
+def predict_faces_batch(classifier, transform, faces_bgr):
+    tensors = []
+
+    for face_bgr in faces_bgr:
+        rgb = cv2.cvtColor(face_bgr, cv2.COLOR_BGR2RGB)
+        image = Image.fromarray(rgb)
+        tensors.append(transform(image))
+
+    batch = torch.stack(tensors)
+
+    with torch.inference_mode():
+        logits = classifier(batch)
+        probabilities = torch.softmax(logits, dim=1).cpu().numpy()
 
     return probabilities
+
+
+def predict_face(classifier, class_names, transform, face_bgr):
+    return predict_faces_batch(
+        classifier,
+        transform,
+        [face_bgr],
+    )[0]
 
 
 def analyze_image(detector, classifier, class_names, transform, image_bgr):
@@ -151,44 +172,95 @@ def analyze_video(
     class_names,
     transform,
     video_path: str,
-    sample_seconds: float = 1.0,
-    max_samples: int = 30,
+    max_samples: int = 12,
 ):
     capture = cv2.VideoCapture(video_path)
     if not capture.isOpened():
         return []
 
     fps = capture.get(cv2.CAP_PROP_FPS)
+    frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))
+
     if not fps or fps <= 0:
         fps = 25.0
 
-    step = max(1, int(round(fps * sample_seconds)))
+    if frame_count <= 0:
+        capture.release()
+        return []
 
-    analyses = []
-    frame_index = 0
+    sample_count = min(max_samples, frame_count)
+    sample_indices = np.linspace(
+        0,
+        frame_count - 1,
+        num=sample_count,
+        dtype=int,
+    )
+
+    frames = []
+    metadata = []
 
     try:
-        while len(analyses) < max_samples:
+        for frame_index in sample_indices:
+            capture.set(cv2.CAP_PROP_POS_FRAMES, int(frame_index))
             ok, frame = capture.read()
             if not ok:
-                break
+                continue
 
-            if frame_index % step == 0:
-                result = analyze_image(
-                    detector,
-                    classifier,
-                    class_names,
-                    transform,
-                    frame,
-                )
-                if result is not None:
-                    result["frame_index"] = frame_index
-                    result["timestamp"] = frame_index / fps
-                    analyses.append(result)
-
-            frame_index += 1
+            frames.append(frame)
+            metadata.append(
+                {
+                    "frame_index": int(frame_index),
+                    "timestamp": float(frame_index / fps),
+                }
+            )
     finally:
         capture.release()
+
+    if not frames:
+        return []
+
+    results = detector.predict(
+        source=frames,
+        conf=0.25,
+        imgsz=416,
+        verbose=False,
+    )
+
+    faces = []
+    face_meta = []
+
+    for frame, result, meta in zip(frames, results, metadata):
+        face, detector_conf = crop_face_from_result(result, frame)
+        if face is None:
+            continue
+
+        faces.append(face)
+        face_meta.append(
+            {
+                **meta,
+                "face": face,
+                "detector_confidence": detector_conf,
+            }
+        )
+
+    if not faces:
+        return []
+
+    probabilities_batch = predict_faces_batch(
+        classifier,
+        transform,
+        faces,
+    )
+
+    analyses = []
+
+    for meta, probabilities in zip(face_meta, probabilities_batch):
+        analyses.append(
+            {
+                **meta,
+                "probabilities": probabilities,
+            }
+        )
 
     return analyses
 
