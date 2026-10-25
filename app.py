@@ -369,15 +369,34 @@ def show_geometry_fgs_result(faces_bgr):
 
     feature_rows = []
     landmark_rows = []
+    landmark_results = []
 
-    for face in faces_bgr[:12]:
+    for index, face in enumerate(faces_bgr[:12], start=1):
         try:
             landmarks = predict_landmarks(face)
             features = extract_geometry_features(landmarks)
             feature_rows.append(features)
             landmark_rows.append((face, landmarks))
-        except Exception:
-            continue
+            landmark_results.append(
+                {
+                    "index": index,
+                    "face": face,
+                    "landmarks": landmarks,
+                    "features": features,
+                    "status": "ok",
+                }
+            )
+        except Exception as exc:
+            landmark_results.append(
+                {
+                    "index": index,
+                    "face": face,
+                    "landmarks": None,
+                    "features": None,
+                    "status": "failed",
+                    "error": str(exc),
+                }
+            )
 
     if not feature_rows:
         st.warning("Keine verwertbaren 48-Punkt-Landmarks gefunden.")
@@ -429,7 +448,20 @@ def show_geometry_fgs_result(faces_bgr):
         else 0.0
     )
 
-    score_col1, score_col2, score_col3 = st.columns(3)
+    success_count = sum(1 for item in landmark_results if item["status"] == "ok")
+    failed_count = len(landmark_results) - success_count
+    landmark_rate = success_count / max(len(landmark_results), 1)
+
+    feature_variability = {}
+    for key in keys:
+        values = [row[key] for row in feature_rows]
+        feature_variability[key] = float(np.std(values)) if len(values) > 1 else 0.0
+
+    variability_values = list(feature_variability.values())
+    stability_index = 1.0 / (1.0 + float(np.mean(variability_values)))
+    stability_index = float(np.clip(stability_index, 0.0, 1.0))
+
+    score_col1, score_col2, score_col3, score_col4 = st.columns(4)
 
     with score_col1:
         st.metric(
@@ -445,9 +477,22 @@ def show_geometry_fgs_result(faces_bgr):
 
     with score_col3:
         st.metric(
-            "Gesunde Referenz",
-            f"{baseline_meta.get('healthy_cats', '?')} Katzen",
+            "Landmark-Erkennung",
+            f"{landmark_rate * 100:.0f}%",
+            help=f"{success_count} von {len(landmark_results)} Gesichtern verwertbar",
         )
+
+    with score_col4:
+        st.metric(
+            "Session-Stabilität",
+            f"{stability_index * 100:.0f}%",
+            help="Wie ähnlich die geometrischen Messwerte zwischen den ausgewerteten Bildern sind.",
+        )
+
+    st.caption(
+        f"Gesunde Referenz: {baseline_meta.get('healthy_cats', '?')} Katzen | "
+        f"Landmarks erfolgreich: {success_count} | fehlgeschlagen: {failed_count}"
+    )
 
     if normalized_10 < 3.5:
         st.success("Geometrie liegt überwiegend nahe an der gesunden Referenz.")
@@ -476,15 +521,36 @@ def show_geometry_fgs_result(faces_bgr):
         "Die Schwellen sind für den Makeathon transparent gewählt und noch nicht klinisch validiert."
     )
 
-    if landmark_rows:
-        best_face, best_landmarks = landmark_rows[0]
-        overlay = draw_landmarks(best_face, best_landmarks)
-        with st.expander("48 Landmark-Punkte anzeigen"):
-            st.image(
-                cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB),
-                caption="CatFLW 48-Punkt-Geometrie",
-                use_container_width=True,
+    if landmark_results:
+        with st.expander("48 Landmark-Punkte aller ausgewerteten Gesichter anzeigen"):
+            st.caption(
+                "Jedes ausgewertete Gesicht wird separat gezeigt. "
+                "Wenn keine zuverlässigen Landmarks erzeugt werden konnten, "
+                "wird das Bild entsprechend markiert."
             )
+
+            display_cols = st.columns(3)
+
+            for idx, item in enumerate(landmark_results):
+                with display_cols[idx % 3]:
+                    if item["status"] == "ok":
+                        overlay = draw_landmarks(
+                            item["face"],
+                            item["landmarks"],
+                        )
+                        st.image(
+                            cv2.cvtColor(overlay, cv2.COLOR_BGR2RGB),
+                            caption=f"Gesicht {item['index']} – Landmarks erkannt",
+                            use_container_width=True,
+                        )
+                        st.success("48/48 Landmark-Punkte erkannt")
+                    else:
+                        st.image(
+                            cv2.cvtColor(item["face"], cv2.COLOR_BGR2RGB),
+                            caption=f"Gesicht {item['index']} – nicht auswertbar",
+                            use_container_width=True,
+                        )
+                        st.error("Landmarks konnten nicht zuverlässig bestimmt werden")
 
 
 def show_manual_fgs():
