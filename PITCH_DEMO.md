@@ -1,130 +1,96 @@
 # AI-Tails Pitch Demo Runbook
 
-## Goal
-
-Audience flow:
-
-1. QR code scannen
-2. Web-App auf dem Smartphone öffnen
-3. Katze auf der Leinwand fotografieren
-4. AI-Tails analysiert das Gesicht
-5. Ergebnis + FGS-orientierte Merkmale ansehen
-6. Optional: 48 Landmark-Punkte direkt auf dem Gesicht öffnen
-
-## Pitch app
-
-Run locally:
-
-```powershell
-git pull
-python -m pip install -r requirements.txt
-python -m streamlit run pitch_app.py
-```
-
-Open locally first:
+## Audience flow
 
 ```text
-http://localhost:8501
+QR scannen
+    -> mobile Web-App
+    -> Katze fotografieren
+    -> Analyse
+    -> Screening-Status
+    -> Gesichtssignale
+    -> Landmark-Ansicht
 ```
 
-Take one test photo before the pitch. This warms up YOLO, the landmark model and model caches.
-
-## Public URL option A: quick demo tunnel
-
-Use a Cloudflare Quick Tunnel:
+## Terminal 1 — demo app
 
 ```powershell
-cloudflared tunnel --url http://localhost:8501
+cd C:\Users\Kirta\AI-Tails
+.\.venv\Scripts\Activate.ps1
+python -m uvicorn demo_api:app --host 0.0.0.0 --port 8000
 ```
 
-Cloudflare prints a public HTTPS URL such as:
+Local URL:
 
 ```text
-https://example-random.trycloudflare.com
+http://localhost:8000
 ```
 
-Generate the QR code:
+Keep this terminal open.
+
+## Terminal 2 — public HTTPS tunnel
 
 ```powershell
-python make_qr.py https://example-random.trycloudflare.com
+cd C:\Users\Kirta\AI-Tails
+.\.venv\Scripts\Activate.ps1
+& "$env:USERPROFILE\cloudflared.exe" tunnel --url http://localhost:8000
 ```
 
-The resulting `pitch_qr.png` can be shown in the pitch.
+Copy the newly generated `https://...trycloudflare.com` URL.
 
-IMPORTANT: Quick Tunnel URLs change when restarted. Create the QR only after the final tunnel is running.
+Keep this terminal open.
 
-## Public URL option B: stable pitch URL
+## Terminal 3 — QR code
 
-For a fixed QR code prepared in advance, use a named Cloudflare Tunnel with a stable hostname/domain.
+```powershell
+cd C:\Users\Kirta\AI-Tails
+.\.venv\Scripts\Activate.ps1
+python make_qr.py https://YOUR-NEW-URL.trycloudflare.com
+```
 
-Example architecture:
+Generated file:
 
 ```text
-https://demo.your-domain.ch
-          |
-    Cloudflare Tunnel
-          |
-http://localhost:8501
-          |
-    pitch_app.py
+pitch_qr.png
 ```
 
-## Pre-pitch checklist
+## Before presenting
 
-- Laptop connected to power
-- Disable sleep mode for the pitch
-- Confirm internet connection
-- Run `python validate_mvp.py`
-- Start `pitch_app.py`
-- Open the app locally
-- Perform one full test capture
-- Start the public tunnel
-- Test the public URL from a phone using mobile data
-- Test camera permission
-- Generate/test QR code
-- Keep the browser tab open
-- Do not restart Streamlit or the tunnel after generating a Quick-Tunnel QR
+- run `git pull`
+- run `python -m pip install -r requirements.txt`
+- run `python validate_mvp.py`
+- start Terminal 1
+- test `http://localhost:8000`
+- perform one full analysis to warm the models
+- start Terminal 2
+- test the public URL from a phone
+- create the QR in Terminal 3
+- scan the QR once before presenting
+- leave Terminal 1 and Terminal 2 running
 
-## Reliability strategy
+## Pitch safety / fallback
 
-Do not ask the full room to submit analyses simultaneously on one laptop.
+Keep one known-good cat image locally.
 
-Recommended pitch flow:
+If camera access fails:
+- use image upload.
 
-- Everyone may scan the QR and open the app.
-- Ask 1–3 people to perform the live capture at the same time.
-- Keep a second phone ready for the presenter.
-- Keep one known-good cat image saved locally as an upload fallback.
+If the tunnel fails:
+- demonstrate locally at `http://localhost:8000`.
 
-This preserves the genuine live demo while avoiding CPU overload from many simultaneous model inferences.
+If image quality is insufficient:
+- the app should return `Analyse unsicher` rather than a health category.
 
-## Fallback ladder
+Do not present the four screening states as a veterinary diagnosis.
 
-If phone camera permission fails:
-- use the app's image-upload fallback.
+## Current demo states
 
-If the public tunnel fails:
-- presenter continues on the local app at `localhost:8501`.
+- Healthy-like
+- Slight indicators
+- Monitoring
+- Vet check
+- Analyse unsicher (quality fallback)
 
-If a photo contains no usable cat face:
-- retake closer and more frontal.
-- or upload the known-good fallback image.
+## Known limitation to state if asked
 
-If Graphwise / Agent integration is not available:
-- the Vision MVP still displays the measurements, feature scores and Landmark viewer.
-
-## What the audience should see
-
-The main page intentionally avoids the legacy classifier.
-
-Primary result:
-
-- face detection quality
-- 48/48 landmarks
-- image quality
-- ears / eyes / muzzle / whisker-region scores
-- owner-readable short explanation
-- optional landmark overlay
-- technical JSON hidden in an expander
-
-This makes the demonstration understandable without exposing internal development metrics.
+Different photos of the same cat can still produce different deviations because camera angle, distance, zoom, pose and image quality affect facial geometry. Multi-frame stabilization is planned as follow-up work.
