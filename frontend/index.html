@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f4efe8">
+  <title>AI-Tails Live</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="brandbar">
+      <div class="brand">AI-TAILS</div>
+      <div class="live-pill"><span></span> LIVE DEMO</div>
+    </header>
+
+    <section id="capture-screen" class="screen active">
+      <div class="hero">
+        <p class="kicker">Preventive health intelligence</p>
+        <h1>Notice more.<br>Know sooner.</h1>
+        <p class="lede">Fotografiere die Katze. AI-Tails erkennt das Gesicht, misst 48 Landmark-Punkte und macht Abweichungen sichtbar.</p>
+      </div>
+
+      <div class="camera-card">
+        <div class="camera-stage">
+          <video id="video" playsinline autoplay muted></video>
+          <div class="face-guide">
+            <span>Gesicht hier platzieren</span>
+          </div>
+          <canvas id="capture-canvas" hidden></canvas>
+        </div>
+
+        <div class="zoom-row">
+          <button class="zoom-chip active" data-zoom="1">1×</button>
+          <button class="zoom-chip" data-zoom="2">2×</button>
+          <button class="zoom-chip" data-zoom="3">3×</button>
+        </div>
+
+        <button id="capture-btn" class="primary-btn">Foto aufnehmen</button>
+        <label class="secondary-btn upload-btn">
+          Bild hochladen
+          <input id="file-input" type="file" accept="image/*" capture="environment">
+        </label>
+        <p id="camera-note" class="microcopy">Rückkamera wird bevorzugt. Hardware-Zoom wird genutzt, wenn dein Smartphone ihn unterstützt.</p>
+      </div>
+    </section>
+
+    <section id="preview-screen" class="screen">
+      <p class="kicker">Aufnahme prüfen</p>
+      <h2>Ist das Gesicht gut sichtbar?</h2>
+      <img id="preview-image" class="preview-image" alt="Aufgenommenes Katzenbild">
+      <div class="button-grid">
+        <button id="retake-btn" class="secondary-btn">Neu aufnehmen</button>
+        <button id="analyze-btn" class="primary-btn">Analysieren</button>
+      </div>
+    </section>
+
+    <section id="loading-screen" class="screen">
+      <div class="loader-orbit"></div>
+      <p class="kicker">AI-Tails analysiert</p>
+      <h2 id="loading-copy">Katzengesicht erkennen …</h2>
+      <div class="progress"><span></span></div>
+      <div class="loading-steps">
+        <span>Face detection</span><span>48 landmarks</span><span>FGS features</span>
+      </div>
+    </section>
+
+    <section id="result-screen" class="screen">
+      <button id="new-analysis" class="text-btn">← Neue Analyse</button>
+
+      <div id="status-card" class="status-card">
+        <p id="status-eyebrow" class="kicker"></p>
+        <div class="status-title-row">
+          <span id="status-dot" class="status-dot"></span>
+          <h2 id="status-title"></h2>
+        </div>
+        <p id="status-summary" class="status-summary"></p>
+      </div>
+
+      <div class="confidence-row">
+        <div><strong id="face-confidence">–</strong><span>Gesicht erkannt</span></div>
+        <div><strong>48/48</strong><span>Landmarks</span></div>
+        <div><strong id="quality-label">–</strong><span>Bildqualität</span></div>
+      </div>
+
+      <section class="section-block">
+        <p class="kicker">Gesichtssignale</p>
+        <h2>Was ist aufgefallen?</h2>
+        <div id="feature-list" class="feature-list"></div>
+      </section>
+
+      <button id="show-landmarks" class="reveal-btn">
+        <span class="spark">✦</span>
+        <span><strong>Zeig mir, was die KI sieht</strong><small>48 Gesichtspunkte auf dem Foto</small></span>
+        <span>→</span>
+      </button>
+
+      <section id="landmark-panel" class="landmark-panel">
+        <div class="section-head">
+          <div>
+            <p class="kicker">Computer Vision</p>
+            <h2>48 Landmark-Punkte</h2>
+          </div>
+          <button id="close-landmarks" class="icon-btn">×</button>
+        </div>
+        <img id="landmark-image" class="preview-image" alt="Landmark-Overlay">
+        <p class="microcopy">Augen, Ohren, Nase und Maul werden als relative Geometrie ausgewertet. Die Punkte selbst sind keine Diagnose.</p>
+      </section>
+
+      <section class="report-card">
+        <p class="kicker">AI-Tails Bericht</p>
+        <h2>Ein ruhiges Signal statt eines Alarms.</h2>
+        <p id="report-text"></p>
+        <div class="notice">AI-Tails unterstützt das Gesundheitsbewusstsein und tierärztliche Gespräche. Es ersetzt keine tierärztliche Diagnose oder Behandlung.</div>
+      </section>
+    </section>
+
+    <footer>MAKEathon Vision Demo · AI-Tails</footer>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
