@@ -265,11 +265,29 @@ def analyze_video(
     return analyses
 
 
+def estimate_fgs_proxy(class_names, probabilities):
+    probabilities = np.asarray(probabilities, dtype=float)
+
+    anchors = {
+        "HEALTHY": 1.5,
+        "MONITOR": 5.5,
+        "VET_CHECK": 9.0,
+    }
+
+    score = 0.0
+    for class_name, probability in zip(class_names, probabilities):
+        score += anchors[class_name] * float(probability)
+
+    return float(np.clip(score, 0.0, 10.0))
+
+
 def show_ai_result(class_names, probabilities, face_count: int):
     probabilities = np.asarray(probabilities, dtype=float)
     winner_index = int(np.argmax(probabilities))
     winner = class_names[winner_index]
     confidence = float(probabilities[winner_index])
+    fgs_proxy = estimate_fgs_proxy(class_names, probabilities)
+    proxy_interpretation, proxy_emoji = fgs_interpretation(int(round(fgs_proxy)))
 
     st.subheader("KI-Einschätzung")
     st.markdown(
@@ -277,8 +295,18 @@ def show_ai_result(class_names, probabilities, face_count: int):
         f"{CLASS_LABELS_DE[winner]}"
     )
 
-    st.metric("KI-Konfidenz", f"{confidence * 100:.1f}%")
+    metric_col1, metric_col2 = st.columns(2)
+    with metric_col1:
+        st.metric("KI-Konfidenz", f"{confidence * 100:.1f}%")
+    with metric_col2:
+        st.metric("Automatischer FGS-Proxy", f"{fgs_proxy:.1f}/10")
+
     st.caption(f"Ausgewertete Katzengesichter: {face_count}")
+    st.markdown(f"**{proxy_emoji} Proxy-Interpretation:** {proxy_interpretation}")
+    st.caption(
+        "Der automatische FGS-Proxy wird aus den Modellwahrscheinlichkeiten "
+        "abgeleitet. Er ist noch kein echter FGS-Score der fünf einzelnen Action Units."
+    )
 
     st.write("Klassenwahrscheinlichkeiten")
     for class_name, probability in zip(class_names, probabilities):
@@ -294,7 +322,7 @@ def show_ai_result(class_names, probabilities, face_count: int):
             "oder mehrere gute Aufnahmen verwendet werden."
         )
 
-    return winner, confidence
+    return winner, confidence, fgs_proxy
 
 
 def fgs_interpretation(score: int):
